@@ -1,0 +1,14 @@
+---
+title: "Untitled"
+author: "韦晾"
+date: "2025-08-28"
+output: pdf_document
+---
+
+```{r}
+d <- read.csv("out.csv")
+d$T <- d$T / 1000
+plot(d$T, d$Isw, log="x")
+plot(d$T, d$Isw_std, log="xy")
+```
+
