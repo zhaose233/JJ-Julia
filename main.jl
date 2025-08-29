@@ -1,14 +1,84 @@
-include("JosephsonJunction.jl")
-using .JosephsonJunction
+# include("JosephsonJunction.jl")
 using Plots
 using Unitful
 using DifferentialEquations
+using PhysicalConstants.CODATA2022
 using Statistics
+using DataFrames
+using CSV
+using DynamicalSystems
+using ProgressMeter
+using DelimitedFiles
 
-function main()
+const ħ = ReducedPlanckConstant
+const e = ElementaryCharge
+const k_B = BoltzmannConstant
 
-dIdt = 0.1e6u"nA/ms"
-function I_drive(t)
+#####################################################
+# Handy functions
+#####################################################
+
+function rcsj_equation!(du, u, p, τ)
+  ϕ, ω = u
+  β, drive_func = p
+
+  i_drive = drive_func(τ,p)
+
+  du[1] = ω
+  du[2] = i_drive - sin(ϕ) - ω * β
+  
+  nothing
+end
+
+function rcsj_noise!(du, u, p, τ)
+
+  β, _, Γ = p
+
+  noise_amp = sqrt(2 * β * Γ)
+
+  du[1] = 0.0
+  du[2] = noise_amp
+  
+end
+
+function run_chaos_sim(p, tau_end)
+  prob = ODEProblem(rcsj_equation!, [0.0,0.0],[0.0,tau_end],p)
+  sol = solve(prob, TsitPap8(), abstol = 1e-8, reltol = 1e-8)
+
+  return sol
+end
+
+function gen_nois_prob(p, tau_end)
+  prob = SDEProblem(rcsj_equation!, rcsj_noise!, [0,0], [0.0, tau_end], p)
+  
+  condition(u, t, integrator) = u[1] - pi / 2
+  affect!(integrator) = terminate!(integrator)
+  cb = ContinuousCallback(condition, affect!)
+
+  return (prob, cb)
+end
+
+##
+
+function normalize_josephson(p)
+  β = 1 / sqrt(2 * e / ħ * p.I_c * p.R * p.R * p.C)
+  ω_p = sqrt(2 * e * p.I_c / (ħ * p.C))
+  i_drive(τ,p_i) = upreferred(p.I_drive(τ / ω_p, p_i) / p.I_c)
+
+  (β = upreferred(β), ω_p = upreferred(ω_p), i_drive = i_drive)
+end
+
+function get_noise_gamma(p)
+  upreferred((2 * e * k_B * p.T) / (ħ * p.I_c))
+end
+
+#####################################################################
+# Tools Above, Main codes below
+#####################################################################
+
+dIdt = 1e6u"nA/ms"
+
+function I_drive(t,p)
   dIdt * t
 end
 
@@ -24,24 +94,28 @@ function run_with_T(temp)
   τ_end = upreferred(normal_j.ω_p * 1.2 * jj_par.I_c / dIdt)
   println(τ_end)
 
-  prob, cb = gen_nois_prob((normal_j.β, normal_j.i_drive, Γ), τ_end)
+  p = (β = normal_j.β, i_drive = normal_j.i_drive, Γ = Γ)
+  prob, cb = gen_nois_prob(p, τ_end)
 
   function prob_func(prob, i, repeat)
     remake(prob)
   end
 
   ensemble_prob = EnsembleProblem(prob)
-  sim = solve(ensemble_prob, SRA1(), EnsembleThreads(), 
-              trajectories=10, dt=τ_end/10000.0, maxiters=1e9,
+  sim = solve(ensemble_prob, SRIW1(), EnsembleThreads(), 
+              trajectories=1000, maxiters=1e9, dt=1,
               callback=cb,
               save_everystep=false, 
               save_start=false)
 
   ts = map(x -> (x.t[end] / normal_j.ω_p), sim.u)
-  Is = map(x -> ustrip(u"μA", I_drive(x)), ts)
+  Is = map(x -> ustrip(u"μA", I_drive(x, p)), ts)
   println(Is)
   return Is
 end
+
+
+function main_Isw()
 
 Ts = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0] .* 100.0u"mK"
 Iss = map(run_with_T, Ts)
@@ -58,3 +132,69 @@ end
 return Iss
 
 end
+
+function i_drive(τ, p)
+  return p.amp * sin(p.ω_s * τ)
+end
+
+function main_chaos_noise()
+  function run_noise_chaos_sim(p)
+    prob = SDEProblem(rcsj_equation!, rcsj_noise!, [0.0,0.0],[0.0,p.τ_end],p)
+    sol = solve(prob, SRIW1())
+    return sol
+  end
+
+  for amp in [0.8, 1.0636, 1.0652, 1.08, 1.212, 1.32]
+    p = (β=0.5, i_drive=i_drive, Γ=0.001, amp=amp, ω_s = 0.66, τ_end=800)
+    sol = run_noise_chaos_sim(p)
+    df = DataFrame(sol)
+    CSV.write(join(("chaos_noise_", amp, ".csv"), ""), df)
+  end
+end
+
+function main_chaos()
+  for amp in [0.8, 1.0636, 1.0652, 1.08, 1.212, 1.32]
+    p = (β=0.5, i_drive=i_drive, Γ=0.000, amp=amp, ω_s = 0.66, τ_end=800)
+    sol = run_chaos_sim(p,p.τ_end)
+    df = DataFrame(sol)
+    CSV.write(join(("chaos_", amp, ".csv"), ""), df)
+  end
+end
+
+function main_lle()
+  jj_par = (R= 0.44u"kΩ", I_c = 2.2u"μA", C=0.33u"pF", I_drive = I_drive)
+  normal_j = normalize_josephson(jj_par)
+
+  function get_lle(amp, ω_s)
+    p = (β=0.5, i_drive=i_drive, Γ=0.000, amp=amp, ω_s = ω_s)
+    ds = CoupledODEs(rcsj_equation!, [0.0,0.0], p, diffeq = (alg = AutoVern9(Rodas5P()), reltol = 1e-6))
+    lle = lyapunov(ds, 4000.0, Ttr=2000.0)
+    return lle
+  end
+
+  amps = range(1.0, 1.5, length = 200)
+  ω_ss = 10 .^ range(log10(0.5), log10(1), 200)
+  # println(ω_ss)
+  lles = zeros(length(amps), length(ω_ss))
+
+  indices = CartesianIndices(lles)
+  @showprogress Threads.@threads for I in indices
+    i, j = I.I
+    lle = get_lle(amps[i], ω_ss[j])
+    lles[i, j] = lle
+  end
+
+  writedlm("lle_matrix.csv", lles, ", ")
+  writedlm("lle_omegas.csv", ω_ss, ", ")
+  writedlm("lle_amps.csv", amps, ", ")
+
+  ENV["QT_QPA_PLATFORM"]="xcb"
+  gr()
+  p = heatmap(ω_ss, amps, max.(lles, 0), xaxis = :log10, xlabel = "ω_s", ylabel = "i_a")
+  display(p)
+
+  return lles
+
+end
+
+# function get_LLE_from_sol(sol, )

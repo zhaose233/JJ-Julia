@@ -6,9 +6,116 @@ output: pdf_document
 ---
 
 ```{r}
-d <- read.csv("out.csv")
-d$T <- d$T / 1000
-plot(d$T, d$Isw, log="x")
-plot(d$T, d$Isw_std, log="xy")
+cairo_ps("I_sw_T.eps", 
+           width = 6,         # 設置寬度為 7 英吋
+           height = 4,        # 設置高度為 5 英吋
+           #horizontal = FALSE, # 設置為垂直方向
+           onefile = FALSE,
+           family = "Times")
+
+d=list()
+ias=c("0.5e5", "1e5", "1e6", "1e7", "1e8")
+for (ia in ias) {
+  d[[which(ias == ia)]] = read.csv(paste0("out_", ia, ".csv"))
+}
+
+plot(d[[1]]$T, d[[1]]$Isw, log="x", xlab = "T (K)", ylab=expression(I[sw] (mu*A)),col = "red",type="o", ylim = c(min(d[[1]]$Isw), 2.2))
+
+points(d[[1]]$T, d[[2]]$Isw, log="x", xlab = "T (K)", ylab=expression(I[sw] (mu*A)),col = "blue",type="o")
+
+points(d[[1]]$T, d[[3]]$Isw, log="x", xlab = "T (K)", ylab=expression(I[sw] (mu*A)),col = "green",type="o")
+
+points(d[[1]]$T, d[[4]]$Isw, log="x", xlab = "T (K)", ylab=expression(I[sw] (mu*A)),col = "purple",type="o")
+
+points(d[[1]]$T, d[[5]]$Isw, log="x", xlab = "T (K)", ylab=expression(I[sw] (mu*A)),col = "orange",type="o")
+legend("bottomleft",legend = c(expression(50~mA/s), expression(10^2~mA/s), expression(10^3~mA/s), expression(10^4~mA/s),expression(10^5~mA/s)),col=c("red","blue","green","purple","orange"), lwd = "3")
+dev.off()
+
+lms <- list()
+for(i in 1:5) {
+  lms[[i]] <- lm(log(d[[i]]$Isw_std * 1000) ~ log(d[[i]]$T))
+}
+
+plot(d[[1]]$T, d[[1]]$Isw_std * 1000, log="xy", xlab = "T (K)", ylab=expression(sgima~I[sw] (n*A)),col = "red",type="p")
+points(d[[1]]$T, d[[2]]$Isw_std * 1000, col = "blue")
+points(d[[1]]$T, d[[3]]$Isw_std * 1000, col = "green")
+points(d[[1]]$T, d[[4]]$Isw_std * 1000, col = "purple")
+points(d[[1]]$T, d[[5]]$Isw_std * 1000, col = "orange")
+
+abline(lms[[1]], col = "red", lwd = 2)
 ```
 
+```{r}
+d_chaos = list()
+
+chaos=c("0.8", "1.0636", "1.0652", "1.08", "1.212", "1.32")
+for(i in chaos) {
+  d[[which(chaos == i)]] = read.csv(paste0("chaos_", i, ".csv"))
+}
+
+par(mfrow=c(2,3))
+for(i in 1:6) {
+  d[[i]] <- d[[i]][d[[i]]$timestamp >= 700, ]
+  plot(d[[i]]$timestamp, d[[i]]$value2, main = bquote(i[a]== .(chaos[i])),
+       xlab=expression(tau), ylab=expression(d * phi / d * tau), type = "l")
+}
+
+par(mfrow=c(2,3))
+for(i in 1:6) {
+  d[[i]] <- d[[i]][d[[i]]$timestamp >= 700, ]
+  plot(d[[i]]$value1, d[[i]]$value2, main = bquote(i[a]== .(chaos[i])),
+       xlab=expression(phi), ylab=expression(d * phi / d * tau), type = "l")
+}
+
+```
+
+```{r}
+d_chaos = list()
+
+chaos=c("0.8", "1.0636", "1.0652", "1.08", "1.212", "1.32")
+for(i in chaos) {
+  d[[which(chaos == i)]] = read.csv(paste0("chaos_noise_", i, ".csv"))
+}
+
+cairo_ps("chaos_noise_omega_tau.eps", 
+          width = 6,
+          height = 4,
+           #horizontal = FALSE, # 設置為垂直方向
+          onefile = FALSE,
+          family = "Times")
+
+par(mfrow=c(2,3))
+for(i in 1:6) {
+  d[[i]] <- d[[i]][d[[i]]$timestamp >= 700, ]
+  plot(d[[i]]$timestamp, d[[i]]$value2, main = bquote(i[a]== .(chaos[i])),
+       xlab=expression(tau), ylab=expression(d * phi / d * tau), type = "l")
+}
+
+dev.off()
+
+cairo_ps("chaos_noise_phi_tau.eps", 
+          width = 6,
+          height = 4,
+           #horizontal = FALSE, # 設置為垂直方向
+          onefile = FALSE,
+          family = "Times")
+
+par(mfrow=c(2,3))
+for(i in 1:6) {
+  d[[i]] <- d[[i]][d[[i]]$timestamp >= 700, ]
+  plot(d[[i]]$value1, d[[i]]$value2, main = bquote(i[a]== .(chaos[i])),
+       xlab=expression(phi), ylab=expression(d * phi / d * tau), type = "l")
+}
+
+dev.off()
+
+```
+
+```{r}
+d <- as.matrix(read.csv("heat_lle.csv", header = FALSE))
+
+heatmap(d,
+        Rowv = NA,
+        Colv = NA,
+        scale = "none")
+```
